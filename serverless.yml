@@ -1,0 +1,97 @@
+service: demo-lumen-serverless
+
+provider:
+  name: aws
+  region: us-west-2
+  stage: prod
+  runtime: provided.al2
+  environment:
+    APP_ENV:  ${ssm:demo_app_env}
+    APP_NAME: "Your APP Name"
+    APP_KEY: ${ssm:demo_app_key}
+    APP_DEBUG: ${ssm:demo_app_debug}
+    APP_URL: ${ssm:demo_app_url}
+    APP_TIMEZONE: UTC
+    API_KEY: ${ssm:demo_api_key}
+    DB_CONNECTION: mysql
+    DB_HOST: ${ssm:demo_db_url}
+    DB_PORT: 3306
+    DB_DATABASE: ${ssm:demo_db_name}
+    DB_USERNAME: ${ssm:demo_db_username}
+    DB_PASSWORD: ${ssm:demo_db_pass}
+    CACHE_DRIVER: database
+    CACHE_PREFIX: your_app
+    QUEUE_CONNECTION: database
+    FACEBOOK_ACTIVE: true
+    FACEBOOK_CLIENT_ID: ${ssm:demo_fb_client_id}
+    FACEBOOK_CLIENT_SECRET: ${ssm:demo_fb_client_secret}
+    FACEBOOK_REDIRECT: ${APP_URL}/v1/oauth/facebook/callback
+    MAIL_DRIVER: smtp
+    MAIL_FROM_ADDRESS: demo@your-domain.com
+    MAIL_FROM_NAME: "Your App"
+    MAIL_HOST: email-smtp.us-west-2.amazonaws.com
+    MAIL_PORT: 587
+    MAIL_USERNAME:  ${ssm:ses_mail_password}
+    MAIL_PASSWORD: ${ssm:ses_mail_password}
+    MAIL_ENCRYPTION: tls
+    FCM_SERVER_KEY: ${ssm:demo_fcm_server_key}
+    FCM_SENDER_ID: ${ssm:demo_fcm_server_id}
+    AWS_BUCKET: ${ssm:demo_s3_bucket}
+    FILESYSTEM_DRIVER: s3
+  iamRoleStatements:
+    # Allow Lambda to read and write files in the S3 buckets
+    - Effect: Allow
+      Action: s3:*
+      Resource:
+        - !Sub '${Storage.Arn}' # the storage bucket
+        - !Sub '${Storage.Arn}/*' # and everything inside
+
+resources:
+  Resources:
+    Storage:
+      Type: AWS::S3::Bucket
+
+plugins:
+  - ./vendor/bref/bref
+  - ./vendor/bref/extra-php-extensions
+
+package:
+  exclude:
+    - node_modules/**
+    - public/storage
+    - resources/assets/**
+    - storage/**
+    - tests/**
+  include:
+    - storage/oauth-private.key
+    - storage/oauth-public.key
+
+functions:
+  website:
+    handler: public/index.php
+    timeout: 28 # in seconds (API Gateway has a timeout of 29 seconds)
+    layers:
+      - ${bref:layer.php-73-fpm}
+      - ${bref-extra:gd-php-73}
+    events:
+      -   http: 'ANY /'
+      -   http: 'ANY /{proxy+}'
+
+  artisan:
+    handler: artisan
+    timeout: 120 # in seconds
+    layers:
+      - ${bref:layer.php-73} # PHP
+      - ${bref:layer.console} # The "console" layer
+      - ${bref-extra:gd-php-73}
+    events:
+      - schedule:
+          name: demo-run-queue
+          description: "Event run queue from db."
+          rate: cron(0/15 * * * ? *) # Run every 15 minutes
+          input: '"queue:work"'
+      - schedule:
+          name: demo-process
+          description: "Demo Process."
+          rate: cron(0 2 * * ? *) # Run every day at 2:00 am
+          input: '"demo:process"'
